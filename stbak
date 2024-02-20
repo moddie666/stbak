@@ -1,0 +1,542 @@
+#!/bin/bash
+#
+#stbak.sh
+#Tape Backup script
+
+USAGE="STBAK - The Simple Tape Backup
+Usage Information:
+stbak \"<path(s)>\" <command>[=<filenumber(s)>][=<label>]
+
+<path(s)>
+	... one or multiple paths. To ensure correct handling, paths should be enclosed in quotes especially if they contain special characters or wildcards.
+<command>
+	... status)  print Tape drive Status Information
+	... rewind)  rewind to the start of the tape
+	... move)    move to beginning of file number <filenumber> (e.g. stbak move=3)
+	... tarfile) write <path> to <filenumber> on <label> (e.g. stbak /home/user wrfile[=3][=some-tape])
+	... bz2file) same as above but with bzip2 compression
+	... tgzfile) same as above but with gz compression	
+	... rdfile)  output contents of <filenumber> to stdout (e.g. stbak rdfile=3)
+	... scan)    read parts of or the whole tape into database, this requires a valid label definition either on tape or the command line. (e.g. stbak scan[=a[-b]][=some-tape])
+<filenumber>
+	... [move|wrfile|rdfile] to/from specified filenumber
+<label>
+	... name of the tape, can contain the following caracters A-z,0-9,-,_,. [scan|index|wrfile]
+"
+
+#NON RREWINDING TAPE DEVICE
+TAPE=/dev/nst0
+MDIR=/var/log/stbak
+#content of last argument
+if [ "$#" -lt "1" ]; then echo "$USAGE"; exit 1 ; fi
+CMD=$(eval echo \${$#})
+PTH=$(sed -r "s|$CMD||g" <<< "$@")
+fwdt(){
+        for n in {0..3}
+        do spin $1 $3 $4
+        sleep $1; tput cuu $SPWCL;done
+}
+rwdt(){
+        for n in {3..0}
+        do spin $1 $3 $4
+        sleep $1; tput cuu $SPWCL; done
+}
+rtime(){
+    T=$SECONDS
+    M=0
+    H=0
+    D=0
+    if((T>59));then
+        ((S=T%60))
+        ((T=T/60))
+        if((T>59));then
+            ((M=T%60))
+            ((T=T/60))
+            if((T>23));then
+                ((H=T%24))
+                ((D=T/24))
+            else
+                ((H=T))
+            fi
+        else
+            ((M=T))
+        fi
+    else
+        ((S=T))
+    fi
+    if [ $H -lt 10 ];then H=0$H;fi
+    if [ $M -lt 10 ];then M=0$M;fi
+    if [ $S -lt 10 ];then S=0$S;fi
+    if [ $D -lt 10 ];then D=0$D;fi
+    echo "$H:$M:$S ${D}D"
+}
+findlc(){
+if [ -d  "$FINDPT" ]
+then find $FINDPT |wc -l
+else FINDLC=0;fi
+}
+spin(){
+	save="$(bc <<< "scale=2;0$save+$1")"
+	if [ "$(bc -l <<< "$save > 1")" -eq "1" ]
+	then
+		if [ "x$(egrep '^scan$|^write.*' <<< "$3")" != "x" ]
+	        then #/tmp/STBAKPV
+			if [ "x$FINDPT" = "x" ]
+			then
+				if [ "x$(egrep '^write.*' <<< "$3")" != "x" ]
+				then FINDPT="$PTH"
+				else FINDPT=$(head -n1 $MDIR/$LABEL-$FNUM.log 2>/dev/null |egrep -o ' [0-9]{1,2}:[0-9]{1,2} .*$|^.*/.*$' |sed -r 's#^\[.*\[[0-9]+\]: ##g;s#^.* [0-9]{1,2}:[0-9]{1,2}\s+(.*)$#\1#g;s#\s+$##g;s#^\s+##g')
+				fi
+			else
+				LOGLCT="$(egrep '/' $MDIR/$LABEL-$FNUM.log |wc -l)"
+				if [ "x$FINDLC" = "x" ]
+				then FINDLC="$(findlc)"; fi
+				LAST="$(tail -n1 $MDIR/$LABEL-$FNUM.log 2>/dev/null |egrep -o ' [0-9]{1,2}:[0-9]{1,2} .*$|^.*/.*$' |sed -r 's#^\[.*\[[0-9]+\]: ##g;s#^.* [0-9]{1,2}:[0-9]{1,2}\s+(.*)$#\1#g')"
+				LLEN="$(wc -c <<< $LAST)"
+				if [ "$LLEN" -gt "79" ]
+				then
+					LAST="${LAST: -79}"
+					PADD=""
+				else
+                	                DIFF=$(bc <<< "80 - $LLEN")
+                        	        PADD=$(head -c $DIFF < /dev/zero | tr '\0' ' ')
+				fi
+				PROGRESS="($LOGLCT/$FINDLC) @ $( bc <<< "scale=4;($LOGLCT/$FINDLC)*100" 2>/dev/null|sed 's#00$##g')% Rate: $(tail -n 1 /tmp/STBAKPV) MiB/s\n$PADD$LAST"
+				PGWCL=""
+				save=0
+			fi
+		elif [ "x$(egrep 'bytecount$' <<< "$3")" != "x" ]
+		then
+			PROGRESS="$(tail -n 1 /tmp/STBAKPV)\n"
+			save=0
+		else
+			PROGRESS="\n"
+        	fi
+	fi
+	OUTPUT="$TOP         \n |#${USET}${sp1[$n]}T${CSET}|A|P${USET}${sp1[$n]}${CSET}E| ${USET}F:$number>$FNUM B:$block E:$status |$(rtime)|\n${CSET}$BTM $PROGRESS"
+	SPWCL="$(echo -e "$OUTPUT" | wc -l)"
+        echo -e "$OUTPUT"
+}
+spinner(){
+        PID=$!
+        CSET=""
+        USET="\e[0m"
+	FINDPT=""
+	FINDLC=""
+        case $2 in
+                red) CSET="\e[31m";;
+                green)CSET="\e[32m";;
+                yellow)CSET="\e[33m";;
+                blue)CSET="\e[34m";;
+                magenta)CSET="\e[35m";;
+                cyan)CSET="\e[36m";;
+        esac
+        TOP="${CSET} /##${USET}S${CSET}IMPLE#\\ ${USET}D:$3 M:$4${CSET}"
+        BTM=" \\##${USET}BA${CSET}C${USET}K${CSET}UP#/${USET}"
+
+	#echo "$(head -c 80 < /dev/zero | tr '\0' ' ')"
+        sp1=('|' '/' '-' '\\')
+        sp2=('-' '\' '|' '/')
+        while [ -d /proc/$PID ]
+        do
+                if [ "$3" = "r" ]
+                then rwdt $@
+                elif [ "$3" = "f" ]
+                then fwdt $@
+                else fwdt $@ ;fi
+        done
+	#some more updates
+	for i in {1..5}
+	do
+	        if [ "$3" = "r" ]
+        	then rwdt $@
+	        elif [ "$3" = "f" ]
+	        then fwdt $@
+        	else fwdt $@ ;fi
+	done
+	echo -e "$4\n\n"
+#	tput el
+#	tput cuu 1
+#	tput el
+#	tput cuu 1
+#       tput el
+#	tput cuu 1
+#       tput el
+
+}
+demo(){
+        case $FNUM in
+             rew|0) echo "rewinding demo..."
+                  sleep 5 &
+                  spinner 0.04 red r demo-rewind
+                  ;;
+             fwd|1) echo "advancing demo..."
+                  sleep 5 &
+                  spinner 0.04 green f demo-advance
+                  ;;
+        esac
+}
+rewind(){
+	echo "rewinding..."
+	mt -f $TAPE rewind &
+	spinner 0.04 blue r rewind
+}
+status(){
+	sleep 1
+	STAT="$(mt -f $TAPE status ; return $?)"
+	eval $(egrep -o 'File number=[0-9]+|status=[0-9]+|block number=[0-9-]+' <<< "$STAT" |sed 's#File ##g;s#block number#block#g')
+	if [ "x$number" = "x" ] || [ "x$block," = "x" ] || [ "x$status" = "x" ]
+	then echo "Status check failure: File=$number, Block=$block, Errs=$status" 1>&2; exit 1 ;fi
+	#else echo "File=$number, Block=$block, Errs=$status" 1>&2 ;fi
+}
+brutemove(){
+	echo "going to $FNUM from beginning of tape" 1>&2
+	mt -f $TAPE asf $FNUM & spinner 0.06 red r brute-seek 1>&2
+}
+go2block(){
+if [ "$1" = "rew" ]
+then mt -f $TAPE bsr $block & spinner 0.07 blue r block-seek 1>&2
+elif [ "$1" = "fwd" ]
+then mt -f $TAPE fsr $nblock & spinner 0.07 yellow f block-seek 1>&2
+else echo "goblock is eror";fi
+
+}
+go2file(){
+if [ "$1" = "rew" ]
+then mt -f $TAPE bsfm $mob & spinner 0.05 cyan r file-seek 1>&2
+elif [ "$1" = "fwd" ]
+then mt -f $TAPE fsf $mov & spinner 0.05 magenta f file-seek 1>&2
+else echo "gofile is eror";fi
+}
+move(){
+#	echo "move()" 1>&2
+	if [ "x$LABEL" != "x" ]
+	then  LBL="on $LABEL"; fi
+	if [ "x$FNUM" = "x" ]
+	then echo "nowhere to go..." 1>&2; return 1 ; fi
+
+	if [ "$status" -gt 0 ]
+	then "$status errors since last status" 1>&2; fi
+	echo "going to file $FNUM $LBL " 1>&2;
+
+	mov="$(bc <<< "$FNUM - $number")"
+	nov="$(egrep -o '[0-9]+' <<< "$mov")"
+	if [ "$mov" -eq 0 ]
+	then echo "we're  already on file $FNUM " 1>&2;
+	elif [ "$mov" -gt 0 ]
+	then
+		echo "(mt -f $TAPE fsf $mov) " 1>&2
+		go2file fwd
+	elif [ "$mov" -lt 0 ]
+	then
+		mob="$((nov + 1))"
+		echo "(mt -f $TAPE bsfm $mob) " 1>&2
+		go2file rew
+	else echo "w00t? mov=$mov" ;fi
+
+	status 1>&2
+	if [ "$block" -gt 0 ]
+	then
+		echo "(mt -f $TAPE bsr $block) " 1>&2
+		go2block rew
+	elif [ "$block" -lt 0 ]
+	then
+		nblock="$(egrep -o '[0-9]+' <<< "$block")";
+		echo "(mt -f $TAPE fsr $nblock) " 1>&2
+		go2block fwd
+	fi
+#	echo "move(/)" 1>&2
+}
+label_read(){
+	eval "$FHEAD"
+	elements=0
+	for s in $STBAK_LABEL
+	do
+		case $elements in
+		        0) LABEL=$s
+			   echo -e "\e[32mLABEL=$LABEL\e[0m";;
+			1) LABEL_DATE=$s
+			   echo -e "\e[32mDATE=$LABEL_DATE\e[0m";;
+			*) return 0;;
+		esac
+		elements=$((elemants + 1))
+	done
+if [ "x$LABEL_DATE" = "x" ] || [ "$LABEL" = "x" ]
+then echo "read failure LABEL_DATE='$LABEL_DATE' LABEL='$LABEL'" ; fi #exit 1 ; fi
+	echo "$STBAK_LABEL" > $MDIR/$LABEL-$FNUM.log
+} 
+echopadding(){
+for i in {0..127}; do echo -n 'PADDDING'; done
+}
+label_write(){
+	ULBL="STBAK_LABEL='$ILABEL $(date +%Y-%m-%d_%H:%M:%S)'"
+	LBLEN=$(wc -c <<< "$ULBL")
+	WRLBL=$(printf '%.1024s' "$ULBL #$(echopadding)")
+	echo "Legth: $LBLEN/1024"
+	if [ "$LBLEN" -gt "1024" ]
+	then echo -e "Your LABEL is too long (1024 bytes total max.)\nSTBAK_LABEL='$ILABEL $(date +%Y-%m-%d_%H:%M:%S)'"
+	else
+	echo "$WRLBL" | cat > $TAPE ; fi
+
+}
+label(){
+	rewind
+	FNUM=0
+	if [ "x$LABEL" = "x" ]
+	then fileinfo ; exit 0
+	else ILABEL=$LABEL # save LABEL from input, before fileinfo overwrites it
+	     fileinfo
+	fi
+	if [ "x$STBAK_LABEL" != "x" ]
+	then
+		echo "This Tape already has a label!"
+		#echo "$STBAK_LABEL"
+		read -p "overwrite label '$LABEL' with '$ILABEL' (y|N)" OWR
+		case $OWR in
+			y|Y) echo -e "Writing new LABEL:\nSTBAK_LABEL='$ILABEL $(date +%Y-%m-%d_%H:%M:%S)'"
+			     label_write; fileinfo;;
+			  *) echo -e "Process cancelled..." ; exit 1
+		esac
+		
+	else
+		read -p "Write new Label? '$ILABEL' (y|N)" OWR
+                case $OWR in
+ 	               y|Y) echo -e "Writing new LABEL:\nSTBAK_LABEL='$ILABEL $(date +%Y-%m-%d_%H:%M:%S)'"
+			    label_write; fileinfo;;
+        	         *) echo -e "Process cancelled..." ; exit 1 ;;
+                esac
+	fi
+}
+fileinfo(){
+#	echo "fileinfo()" 1>&2
+	if [ "x$FNUM" = "x" ]
+	then echo -e "CASSETE='$LABEL' FILE='$FNUM'\n$USAGE\n" 1>&2; exit 1; fi
+
+	gofile $FNUM || return 1
+	status 1>&2
+	FINFO="$(cat $TAPE | head -n1 | tee /tmp/FHEAD | file -)"
+	FHEAD=$(cat /tmp/FHEAD)
+	#FINFO=$(file - <<< "$FHEAD");
+	echo "FINFO=$FINFO"
+
+	if [ "x$FINFO" = "x" ]
+	then return 1; fi
+
+	  if [ "x$(grep "gzip compressed data" <<< "$FINFO")" != "x" ]
+	then
+		COMPRESS="--use-compress-program=pigz"
+	elif [ "x$(grep "bzip2 compressed data" <<< "$FINFO")" != "x" ]
+	then
+		COMPRESS="--use-compress-program=pbzip2"
+        elif [ "x$(grep "POSIX tar archive" <<< "$FINFO")" != "x" ]
+        then
+		COMPRESS=""
+	elif [ "x$(grep "ASCII text" <<< "$FINFO")" != "x" ] && [ "x$(grep "^STBAK_LABEL=.*$" <<< "$FHEAD")" != "x" ]
+	then
+		label_read "$FHEAD"
+		#COMPRESS=""
+	else
+		echo "unknown filetype!"; gofile $FNUM ; return 1
+	fi
+
+	gofile $FNUM || return 1
+#	echo "fileinfo(/)" 1>&2
+}
+gofile(){
+#	echo "gofile()" 1>&2
+	tries=2
+	status 1>&2
+	while [ "$number" -ne "$FNUM" ] || [ "$block" -ne 0 ]
+	do
+		if [ "$tries" -eq 0 ]
+		then echo "retry limit exceded"  1>&2; brutemove ; status 1>&2  
+		else move ; status ; tries=$((tries - 1)) ; sleep 1 
+		fi
+	done
+#	echo "gofile(/)" 1>&2
+}
+wrfile(){
+#	echo "wrfile()"
+	if [ "x$LABEL" = "x" ]
+	then SFNUM="$FNUM"; FNUM=0; fileinfo; FNUM="$SFNUM"; fi
+	if [ "x$FNUM" = "x" ] || [ "x$LABEL" = "x" ] || [ "x$PTH" = "x" ]
+	then echo -e "CASSETE='$LABEL' FILE='$FNUM'\n$USAGE\n" 1>&2; exit 1; fi
+	gofile $FNUM || exit 1
+	echo "writing '$PTH' to file $FNUM on $LABEL" 2>&2
+	tar $COMPRESS -cvf - $PTH 2> $MDIR/$LABEL-$FNUM.log | pv -rf -i 0.5 2>/tmp/STBAKPV | cat > /dev/nst0 & spinner 0.05 red f write$( sed -r 's#-use-compress-program=##g' <<< "$COMPRESS") 1>&2
+#	tar $COMPRESS -cvf $TAPE $PTH 2>/dev/null | ts "[%Y-%m-%d %H:%M:%S][$FNUM]: " > $MDIR/$LABEL-$FNUM.log & spinner 0.05 red f write$( sed -r 's#-##g' <<< "$COMPRESS") 1>&2
+#	echo "wrfile(/)"
+}
+rdfile(){
+#	echo "rdfile()" 1>&2
+	if [ "$TODO" = "rdfile" ] && [ "x$LABEL" = "x" ]
+	then LABEL="NA";fi
+
+	if [ "x$FNUM" = "x" ] 
+	then echo -e "CASSETE='$LABEL' FILE='$FNUM'\n$USAGE\n" 1>&2; exit 1; fi
+
+	fileinfo || return 1
+
+	if [ "x$LABEL" = "x" ] && [ "$FNUM" -eq "0" ]
+	then  echo "This Tape does not have a label!" ; LABEL="NA"; fi
+
+	if [ "$FNUM" -eq "0" ] && [ "$LABEL" != "NA" ]
+	then echo -n "" 
+	elif [ "$TODO" = "scan" ]
+	then	echo "reading file: $FNUM from $LABEL" 1>&2 ; cat $TAPE | tar $COMPRESS -tvf - 2>/dev/null | ts "[%Y-%m-%d %H:%M:%S][$FNUM]: " > $MDIR/$LABEL-$FNUM.log & spinner 0.05 green f scan 1>&2
+		if [ "${PIPESTATUS[0]}" -ne "0" ]
+		then echo "Posible untar failure check results!" 1>&2 ;fi
+	elif [ "$TODO" = "rdfile" ]
+	then echo "reading file: $FNUM from $LABEL" 1>&2 ; tar $COMPRESS -tvf $TAPE && return 0; fi
+#	echo "rdfile(/)" 1>&2
+}
+#cat /dev/nst0 | pv | tar -xvf - > /data/6.log
+#tar -cvf - /voyager/6_haus/ 2> /data/6.log | pv -rf --buffer-size 1g -i 0.5 2>/tmp/STBAKPV | cat > /data/6.tar
+
+getusize(){
+	echo "$(bc <<< "scale=6;$(egrep -o ' [0-9]+ ' $MDIR/$LABEL-$FNUM.log|awk '{s+=$1} END {printf "%.0f", s}')/1024/1024/1024") GiB Uncompressed"
+}
+getasize(){
+	gofile
+	LOG="$MDIR/$LABEL-$FNUM.log"
+        US="$(grep 'GiB Uncompressed' $LOG | awk '{print $3}')"
+	echo "Counting bytes for File#$FNUM:" 1>&2
+	cat $TAPE | pv -nbf -i 0.5 2>/tmp/STBAKPV >/dev/null & spinner 0.05 green f bytecount 1>&2
+	BYTES=$(tail -n1 /tmp/STBAKPV);rm /tmp/STBAKPV
+        CS="$(bc <<< "scale=6;$BYTES/1024/1024/1024")"
+	echo -n "$CS GiB on Tape"
+	
+	if [ "x$US" != "x" ] && [ "x$US" != "x" ]
+	then echo " @ $( bc <<< "scale=2;(($US - $CS)/$US)*100" )% Compression"
+	else echo "fuuuuu..." ; exit 1
+	fi
+}
+compare(){
+	LOG=$MDIR/$LABEL-$FNUM.log
+	echo "Gathering Data..."
+            FINDPT=$(head -n1 $LOG 2>/dev/null |egrep -o ' [0-9]{1,2}:[0-9]{1,2} .*$|^.*/.*$' |sed -r 's#^\[.*\[[0-9]+\]: ##g;s#^.* [0-9]{1,2}:[0-9]{1,2}\s+(.*)$#\1#g')
+	echo -n "LOG:$LOG PT:$FINDPT PWD:$PWD "
+            LOGLCT=$(egrep '/' $LOG |wc -l)
+	echo -n "LEN:$LOGLCT "
+            FIND=$(find "$PWD/$FINDPT")
+	    FINDLC=$(wc -l <<< "$FIND")
+	
+	if [ "$LOGLCT" -ne "$FINDLC" ]
+	then	echo -e "FS:\e[31m$FINDLC\nBuilding diff... > $MDIR/$LABEL-$FNUM.cdiff\e[0m"
+		colordiff --suppress-common-lines -y \
+		<(echo "$FIND" |sed "s#/\$##g;s# -> .*\$##g;s#$PWD/##g"| sort -V) \
+		<(egrep -o ' [0-9]{1,2}:[0-9]{1,2} .*$|^.*/.*$' $LOG |sed -r 's#^\[.*\[[0-9]+\]: ##g;s#^.* [0-9]{1,2}:[0-9]{1,2}\s+(.*)$#\1#g;s#/$##g;s# -> .*$##g'| sort -V) > $MDIR/$LABEL-$FNUM.cdiff
+		#| less -R
+	else
+		echo -e "FS:\e[32m$FINDLC\e[0m"
+	fi
+}
+scan(){
+#	echo "scan()" 1>&2
+	#if [ "x$LABEL" = "x" ]
+	#then echo -e "CASSETE='$LABEL' FILE='$FNUM'\n$USAGE\n" 1>&2; exit 1; fi
+	if [ "x$FNUM" != "x"  ]
+	then echo "Preparing to scan file#: $FNUM"
+	else SNUM=1; ENUM="32000" ;fi
+
+	if [ "x$ENUM" = "x" ]
+	then ENUM=$SNUM ;fi
+	
+	if [ "x$SNUM" = "x" ]
+	then SNUM=$FNUM ; fi
+
+        if [ "x$LABEL" = "x" ]
+        then	rewind || exit 1 
+		FNUM=0
+		rdfile
+	fi
+
+	echo "T:$TODO F:$FNUM S:$SNUM E:$ENUM L:$LABEL"
+	FNUM=$SNUM
+	exit=0
+	while [ "$exit" -le 3 ] && ! [ "$FNUM" -gt "$ENUM" ]
+	do	retry=0
+		echo "reading file: $FNUM to $MDIR/$LABEL-$FNUM.log" 1>&2
+		rdfile || retry=1
+		if [ "$retry" -eq 0 ]
+		then
+                        #FINDPT=$(head -n1 $MDIR/$LABEL-$FNUM.log 2>/dev/null |egrep -o ' [0-9]{1,2}:[0-9]{1,2} .*$|^.*/.*$' |sed -r 's#^\[.*\[[0-9]+\]: ##g;s#^.* [0-9]{1,2}:[0-9]{1,2}\s+(.*)$#\1#g')
+                        #LOGLCT="$(egrep '/' $MDIR/$LABEL-$FNUM.log |wc -l)"
+                        #FINDLC="$(find "/voyager/$FINDPT" |wc -l)"
+                        #echo "(L:$LOGLCT F:$FINDLC)"
+			compare
+
+			getusize|ts "[%Y-%m-%d %H:%M:%S][$FNUM]: " >> $MDIR/$LABEL-$FNUM.log
+			getasize|ts "[%Y-%m-%d %H:%M:%S][$FNUM]: " >> $MDIR/$LABEL-$FNUM.log
+			
+                        FNUM=$((FNUM + 1))
+		else exit=$((exit + 1)) ; fi
+	done
+	#echo "$(bc <<< "scale=6;$(echo $(awk '/ GiB on Tape /{print $3,"+"}' $(ls /var/log/stbak/* | sort -V)))0") GiB across all files on $LABEL"
+#	echo "scan(/)" 1>&2
+}
+dostuff(){
+#	echo "dostuff()" 1>&2
+#set -x
+	eval $(perl -pe 's#^([A-z,0-9,\.]+)?=?(([0-9]+)?-?([0-9]+)?)?=?([A-z,0-9,\-,_,\.]+)?$#TODO=\1;FNUM=\2;SNUM=\3;ENUM=\4;LABEL=\5#g' <<< "$CMD")
+	LPA="$MDIR/"
+	LGF="$LABEL.log"
+	LOG="${LPA}${LGF}"
+	if [ ! -d $LPA ]
+	then mkdir -pv "$LPA" ; fi
+	case $TODO in
+           demo)
+                demo
+                ;;
+	 status)
+		status
+		echo "$STAT"
+		;;
+	 rewind) 
+		rewind
+		;;
+	   move)
+		gofile
+		;;
+        tarfile)
+		RLOG=1
+		wrfile
+		TODO="scan"; scan
+		;;
+        bz2file)
+		COMPRESS="--use-compress-program=pbzip2"
+		RLOG=1
+		wrfile
+	        TODO="scan"; scan
+		;;
+        tgzfile)
+                COMPRESS="--use-compress-program=pigz"
+                RLOG=1
+                wrfile
+                TODO="scan"; scan
+                ;;
+
+          label)
+		label
+		;;
+         rdfile)
+		rdfile
+		;;
+#	index)
+#		rdfile | ts "[%Y-%m-%d %H:%M:%S][$FNUM]: " > $MDIR/$LABEL-$FNUM.log
+#		getusize|ts "[%Y-%m-%d %H:%M:%S][$FNUM]: " >> $MDIR/$LABEL-$FNUM.log
+#		getasize|ts "[%Y-%m-%d %H:%M:%S][$FNUM]: " >> $MDIR/$LABEL-$FNUM.log
+#		;;
+           scan)
+		scan 
+		;;
+              *)	
+		echo "USAGE: $USAGE"
+		echo "'$TODO' '$FNUM' '$LOG' '$PTH'" 
+	esac
+#set +x
+#	echo "dostuff(/)" 1>&2
+}
+#set -x
+dostuff
+#set +x
