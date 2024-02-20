@@ -1,7 +1,8 @@
 ### STBAK - digitally label a tape backup and segment into "files"
-turned out to be more complicated than using tar alone, with automatic breakes for files.
+turned out to be more complicated than using tar alone, with automatic breaks for files.
 but anyways here it is...
-![r](https://github.com/moddie666/stabk/blob/main/stbak_r.gif?raw=true) ![f](https://github.com/moddie666/stabk/blob/main/stbak_f.gif?raw=true)
+![r](https://github.com/moddie666/stbak/blob/main/stbak_r.gif?raw=true)
+![f](https://github.com/moddie666/stbak/blob/main/stbak_f.gif?raw=true)
 
 ```
 :~/stbak$ stbak 
