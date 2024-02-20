@@ -1,8 +1,9 @@
 ### STBAK - digitally label a tape backup and segment into "files"
 turned out to be more complicated than using tar alone, with automatic breakes for files.
 but anyways here it is...
-![](https://github.com/moddie666/stabk/blob/main/stbak_r.gif?raw=true)![](https://github.com/moddie666/stabk/blob/main/stbak_f.gif?raw=true)
-´´´
+![r](https://github.com/moddie666/stabk/blob/main/stbak_r.gif?raw=true) ![f](https://github.com/moddie666/stabk/blob/main/stbak_f.gif?raw=true)
+
+```
 :~/stbak$ stbak 
 STBAK - The Simple Tape Backup
 Usage Information:
@@ -23,4 +24,4 @@ stbak "<path(s)>" <command>[=<filenumber(s)>][=<label>]
         ... [move|wrfile|rdfile] to/from specified filenumber
 <label>
         ... name of the tape, can contain the following caracters A-z,0-9,-,_,. [scan|index|wrfile]
-´´´
+```
